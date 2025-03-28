@@ -18,11 +18,11 @@ def plot_patient_data(patient_datas, datas_labels,get_all=False, num=0,xlim=None
     绘制单个患者的折线图
     :param patient_data: 单个患者的数据字典，包含 "name" 和 "datas"
     """
-
     if(xlim==None):
         xlim=(0,1000)
     plt.figure(figsize=(10, 6))
 
+    linewidth = 0.5
     labels=datas_labels
     name = patient_datas[0]["name"]
 
@@ -35,7 +35,7 @@ def plot_patient_data(patient_datas, datas_labels,get_all=False, num=0,xlim=None
                 mask = (x >= xlim[0]) & (x <= xlim[1])
                 x = x[mask]
                 y = y[mask]
-                plt.plot(x, y, label=labels[j], linewidth=1)  # 绘制折线图
+                plt.plot(x, y, label=labels[j], linewidth=linewidth)  # 绘制折线图
                 j=j+1
     else:
         j=0
@@ -45,8 +45,10 @@ def plot_patient_data(patient_datas, datas_labels,get_all=False, num=0,xlim=None
             mask = (x >= xlim[0]) & (x <= xlim[1])
             x = x[mask]
             y = y[mask]
-            plt.plot(x, y, label=labels[j], linewidth=1)
-            j+=1
+            if(labels[j]=="extracted"):
+                y = np.abs(y)
+            plt.plot(x, y, label=labels[j], linewidth=linewidth)
+            j=j+1
 
     plt.xlabel("X轴")
     plt.ylabel("Y轴")
@@ -62,10 +64,8 @@ def cubic_spline_resample(patient):
     for data in datas:
         x, y = data
         cs = CubicSpline(x, y)
-        num_samples = len(x)
-        x_new=np.linspace(x[0],x[-1],num_samples)
-        y_new = cs(x_new)
-        data = np.array([x_new, y_new])
+        y_new = cs(x)
+        data = np.array([x, y])
         resampled_datas.append(data)
     resampled_patient={
         "name": patient["name"],
@@ -80,17 +80,24 @@ def wavelet_smooth(patient):
     :return: 平滑后的患者数据字典
     """
     smoothed_datas = []
+    level = 4  # 小波分解的层数
     for data in patient["datas"]:
         x, y = data  # 提取 x 和 y 数据
         # 小波分解
         coeffs = pywt.wavedec(y, 'db4', level=4)
-        # 对高频系数进行软阈值处理（平滑）
-        threshold = np.sqrt( np.log(len(y)))  # 阈值可以根据需求调整
-        coeffs[1:] = [pywt.threshold(c, threshold, mode='soft') for c in coeffs[1:]]
-        # 小波重构
+        sigma = np.median(np.abs(coeffs[-level] - np.median(coeffs[-level]))) / 0.6745
+        threshold = sigma * np.sqrt(2 * np.log(len(y)))
+        
+        # 软阈值处理（所有高频系数层）
+        denoised_coeffs = [coeffs[0]]  # 保留近似系数（低频）
+        for i in range(1, level + 1):
+            denoised_coeffs.append(pywt.threshold(coeffs[i], threshold, mode='soft'))
+
+        # 重构信号
         y_smooth = pywt.waverec(coeffs, 'db4')
         # 确保重构后的数据长度与原始数据一致
         y_smooth = y_smooth[:len(y)]
+
         # 将平滑后的数据存储
         smoothed_datas.append(np.array([x, y_smooth]))
     # 返回平滑后的患者数据
@@ -127,21 +134,29 @@ def baseline_correct(patient):
 
 def peak_extract(patient):
     extracted_datas = []
+    min_snr=3
+    window = 100
     for data in patient["datas"]:
         x, y = data
         # 二阶连续小波变换
         scales = np.arange(1, 20)  # 尺度范围可调
-        min_snr = 3
         coefficients = np.zeros((len(scales), len(y)))
         for i, scale in enumerate(scales):
             wavelet = pywt.cwt(y, scales=[scale], wavelet='mexh')[0][0]
             coefficients[i] = wavelet
-            snr = np.abs(coefficients[i]).max() / np.std(coefficients[i])
-            if(snr < min_snr):
-                coefficients[i]=np.zeros(len(y))
-
-        final_coefficients = np.abs(np.sum(coefficients, axis=0))
-        extracted_datas.append(np.array([x, final_coefficients]))
+        y_sharpend=np.abs(np.sum(coefficients,axis=0))
+        mask=np.zeros(len(y))
+        # 提取局部最大值
+        peaks = (np.diff(np.sign(np.diff(y_sharpend))) < 0).nonzero()[0] + 1
+        for peak in peaks:
+            # 计算局部信噪比
+            local_signal = y_sharpend[peak]
+            local_noise = np.mean(y_sharpend[max(0, peak - window//2) : min(len(y), peak + window//2)])
+            snr = local_signal / local_noise
+            if snr > min_snr:
+                mask[peak] = 1
+        extracted_data = mask*y_sharpend
+        extracted_datas.append(np.array([x, extracted_data]))
 
     extracted_patient = {
         "name": patient["name"],
@@ -163,14 +178,10 @@ def prepare():
         extracted_datas.append(extracted_data)
         prepared_datas.append(extracted_data)
 
-    return prepared_datas,resampled_datas,smoothed_datas,corrected_datas,extracted_datas
+    return all_patients_datas,resampled_datas,smoothed_datas,corrected_datas,extracted_datas
 
 
 if __name__ == "__main__":
     (ad,rd,sd,cd,ed)=prepare()
-    plot_patient_data([ad[0]], ["Origin"],get_all=False, num=1)
-    plot_patient_data([rd[0]], ["Resampled"],get_all=False, num=1)
-    plot_patient_data([sd[0]], ["Resampled"],get_all=False, num=1)
-    plot_patient_data([cd[0]], ["Corrected"],get_all=False, num=1)
-    
-  
+    plot_patient_data((rd[0],sd[0]),("resampled","smoothed"),get_all=False,num=1,xlim=(114,114.8))
+    plot_patient_data((cd[0],ed[0]),("corrected","extracted"),get_all=False,num=1)

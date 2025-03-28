@@ -62,7 +62,11 @@ def get_all_patients_datas():
                 # 将每个患者的数据存储为字典
                 all_patients_datas.append(datas)
             else:
+                print(f"文件 {col + str(i)} 不存在，跳过该患者。")
                 break
     return all_patients_datas
 
-gapd=get_all_patients_datas()
+if __name__ == "__main__":
+    gapd=get_all_patients_datas()
+    print(gapd)
+    print(gapd)
