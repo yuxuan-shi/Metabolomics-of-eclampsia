@@ -171,10 +171,44 @@ def peak_extract(patient):
     }
     return extracted_patient
 
+def gaussian(x, a, b, c):
+    """
+    高斯函数
+    :param x: 自变量
+    :param a: 振幅
+    :param b: 峰中心
+    :param c: 标准差
+    :return: 高斯函数值
+    """
+    return a * np.exp(-((x - b) ** 2) / (2 * c ** 2))
+
+#峰面积拟合（高斯函数）
+def peak_area_fitting(patient):
+    fitted_datas = []
+    for data in patient["datas"]:
+        x, y = data
+        peaks, _ = find_peaks(y, height=0)
+        areas = []
+        for peak in peaks:
+            try:
+                # 使用高斯函数拟合每个峰
+                popt, _ = curve_fit(gaussian, x, y, p0=[max(y), x[peak], 1])
+                areas.append(popt[0])  # 保存峰面积
+            except RuntimeError as e:
+                # 如果拟合失败，记录失败的峰位置
+                print(f"拟合失败在峰位置 {peak}: {e}")
+                areas.append(0)  # 用0代替失败的拟合结果
+        fitted_datas.append(np.array([x, np.array(areas)]))
+    fitted_patient = {
+        "name": patient["name"],
+        "datas": fitted_datas
+    }
+    return fitted_patient
+
 
 def prepare():
     all_patients_datas = get_all_patients_datas()
-    prepared_datas,resampled_datas,smoothed_datas,corrected_datas,extracted_datas,num_peaks=[],[],[],[],[],[]
+    prepared_datas,resampled_datas,smoothed_datas,corrected_datas,extracted_datas,fitted_datas,num_peaks=[],[],[],[],[],[],[]
     for patient in all_patients_datas:
         resampled_data = cubic_spline_resample(patient)
         resampled_datas.append(resampled_data)
@@ -184,15 +218,18 @@ def prepare():
         corrected_datas.append(corrected_data)
         extracted_data = peak_extract(corrected_data)
         extracted_datas.append(extracted_data)
+        fitted_data = peak_extract(extracted_data)
+        fitted_datas.append(fitted_data)
 
         # 该病人第一组数据y不为0的点数（峰值数量）
         num_peaks.append(np.sum(extracted_data["datas"][0][1] > 0))
 
-    return all_patients_datas,extracted_datas,num_peaks
-
+    return all_patients_datas,extracted_datas,fitted_datas,num_peaks
 
 if __name__ == "__main__":
-    (ad,ed,num_peaks)=prepare()
+    (ad,ed,fd,num_peaks)=prepare()
     plot_patient_data(([ed[0]]),("extracted"),get_all=False,num=1)
     plot_patient_data((ad[0],ed[0]),("corrected","extrac"),get_all=False,num=1,xlim=(90,120))
+    plot_patient_data(([fd[0]]),("fitted"),get_all=False,num=1)
+    plot_patient_data((ed[0],fd[0]),("extracted","fitted"),get_all=False,num=1)
     print(num_peaks[0])
